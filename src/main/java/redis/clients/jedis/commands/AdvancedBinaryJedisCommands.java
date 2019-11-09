@@ -42,4 +42,9 @@ public interface AdvancedBinaryJedisCommands {
   String clientSetname(byte[] name);
 
   byte[] memoryDoctorBinary();
+  
+  Long memoryUsage(byte[] key);
+
+  Long memoryUsage(byte[] key, int samples);
+
 }
