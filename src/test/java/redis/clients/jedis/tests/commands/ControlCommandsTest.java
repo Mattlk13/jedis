@@ -1,7 +1,9 @@
 package redis.clients.jedis.tests.commands;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.List;
@@ -17,7 +19,9 @@ import org.junit.Test;
 import redis.clients.jedis.DebugParams;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisMonitor;
+import redis.clients.jedis.Protocol;
 import redis.clients.jedis.exceptions.JedisDataException;
+import redis.clients.jedis.util.SafeEncoder;
 
 public class ControlCommandsTest extends JedisCommandTestBase {
   @Test
@@ -84,7 +88,7 @@ public class ControlCommandsTest extends JedisCommandTestBase {
           Thread.sleep(100);
         } catch (InterruptedException e) {
         }
-        Jedis j = new Jedis("localhost");
+        Jedis j = new Jedis();
         j.auth("foobared");
         for (int i = 0; i < 5; i++) {
           j.incr("foobared");
@@ -117,15 +121,29 @@ public class ControlCommandsTest extends JedisCommandTestBase {
   @Test
   public void configSet() {
     List<String> info = jedis.configGet("maxmemory");
+    assertEquals("maxmemory", info.get(0));
     String memory = info.get(1);
-    String status = jedis.configSet("maxmemory", "200");
-    assertEquals("OK", status);
-    jedis.configSet("maxmemory", memory);
+    assertEquals("OK", jedis.configSet("maxmemory", "200"));
+    assertEquals("OK", jedis.configSet("maxmemory", memory));
   }
 
   @Test
-  public void sync() {
-    jedis.sync();
+  public void configGetSetBinary() {
+    byte[] maxmemory = SafeEncoder.encode("maxmemory");
+    List<byte[]> info = jedis.configGet(maxmemory);
+    assertArrayEquals(maxmemory, info.get(0));
+    byte[] memory = info.get(1);
+    assertEquals("OK", jedis.configSet(maxmemory, Protocol.toByteArray(200)));
+    assertEquals("OK", jedis.configSet(maxmemory, memory));
+  }
+
+  @Test
+  public void configGetSetBinary2() {
+    byte[] maxmemory = SafeEncoder.encode("maxmemory");
+    List<byte[]> info = jedis.configGet(maxmemory);
+    assertArrayEquals(maxmemory, info.get(0));
+    byte[] memory = info.get(1);
+    assertEquals("OK", jedis.configSetBinary(maxmemory, memory));
   }
 
   @Test
@@ -139,8 +157,7 @@ public class ControlCommandsTest extends JedisCommandTestBase {
 
   @Test
   public void waitReplicas() {
-    Long replicas = jedis.waitReplicas(1, 100);
-    assertEquals(1, replicas.longValue());
+    assertEquals(1, jedis.waitReplicas(1, 100));
   }
 
   @Test
@@ -197,5 +214,45 @@ public class ControlCommandsTest extends JedisCommandTestBase {
   public void memoryDoctorBinary() {
     byte[] memoryInfo = jedis.memoryDoctorBinary();
     assertNotNull(memoryInfo);
+  }
+
+  @Test
+  public void memoryUsageString() {
+    // Note: It has been recommended not to base MEMORY USAGE test on exact value, as the response
+    // may subject to be 'tuned' especially targeting a major Redis release.
+
+    jedis.set("foo", "bar");
+    long usage = jedis.memoryUsage("foo");
+    assertTrue(usage >= 30);
+    assertTrue(usage <= 80);
+
+    jedis.lpush("foobar", "fo", "ba", "sha");
+    usage = jedis.memoryUsage("foobar", 2);
+    assertTrue(usage >= 110);
+    assertTrue(usage <= 190);
+
+    assertNull(jedis.memoryUsage("roo", 2));
+  }
+
+  @Test
+  public void memoryUsageBinary() {
+    // Note: It has been recommended not to base MEMORY USAGE test on exact value, as the response
+    // may subject to be 'tuned' especially targeting a major Redis release.
+
+    byte[] bfoo = {0x01, 0x02, 0x03, 0x04};
+    byte[] bbar = {0x05, 0x06, 0x07, 0x08};
+    byte[] bfoobar = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+
+    jedis.set(bfoo, bbar);
+    long usage = jedis.memoryUsage(bfoo);
+    assertTrue(usage >= 30);
+    assertTrue(usage <= 80);
+
+    jedis.lpush(bfoobar, new byte[]{0x01, 0x02}, new byte[]{0x05, 0x06}, new byte[]{0x00});
+    usage = jedis.memoryUsage(bfoobar, 2);
+    assertTrue(usage >= 110);
+    assertTrue(usage <= 190);
+
+    assertNull(jedis.memoryUsage("roo", 2));
   }
 }

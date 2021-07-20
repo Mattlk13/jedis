@@ -1,11 +1,10 @@
 package redis.clients.jedis;
 
 import java.io.Closeable;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.SSLParameters;
-import javax.net.ssl.SSLSocketFactory;
 
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 
@@ -15,82 +14,60 @@ public abstract class JedisClusterConnectionHandler implements Closeable {
   protected final JedisClusterInfoCache cache;
 
   public JedisClusterConnectionHandler(Set<HostAndPort> nodes,
-      final GenericObjectPoolConfig poolConfig, int connectionTimeout, int soTimeout, String password) {
+      GenericObjectPoolConfig<Jedis> poolConfig, int connectionTimeout, int soTimeout,
+      String password) {
     this(nodes, poolConfig, connectionTimeout, soTimeout, password, null);
   }
 
   public JedisClusterConnectionHandler(Set<HostAndPort> nodes,
-      final GenericObjectPoolConfig poolConfig, int connectionTimeout, int soTimeout, String password, String clientName) {
-    this(nodes, poolConfig, connectionTimeout, soTimeout, password, clientName, false, null, null, null, null);
-  }
-
-  public JedisClusterConnectionHandler(Set<HostAndPort> nodes, final GenericObjectPoolConfig poolConfig,
-      int connectionTimeout, int soTimeout, String user, String password, String clientName) {
-    this(nodes, poolConfig, connectionTimeout, soTimeout, user, password, clientName, false, null, null, null, null);
+      GenericObjectPoolConfig<Jedis> poolConfig, int connectionTimeout, int soTimeout,
+      String password, String clientName) {
+    this(nodes, poolConfig, connectionTimeout, soTimeout, null, password, clientName);
   }
 
   public JedisClusterConnectionHandler(Set<HostAndPort> nodes,
-      final GenericObjectPoolConfig poolConfig, int connectionTimeout, int soTimeout, String password, String clientName,
-      boolean ssl, SSLSocketFactory sslSocketFactory, SSLParameters sslParameters,
-      HostnameVerifier hostnameVerifier, JedisClusterHostAndPortMap portMap) {
-    this.cache = new JedisClusterInfoCache(poolConfig, connectionTimeout, soTimeout, password, clientName,
-        ssl, sslSocketFactory, sslParameters, hostnameVerifier, portMap);
-    initializeSlotsCache(nodes, connectionTimeout, soTimeout, password, clientName, ssl, sslSocketFactory, sslParameters, hostnameVerifier);
+      final GenericObjectPoolConfig<Jedis> poolConfig, int connectionTimeout, int soTimeout,
+      String user, String password, String clientName) {
+    this(nodes, poolConfig, connectionTimeout, soTimeout, 0, user, password, clientName);
   }
 
   public JedisClusterConnectionHandler(Set<HostAndPort> nodes,
-                                       final GenericObjectPoolConfig poolConfig, int connectionTimeout, int soTimeout,
-                                       String user, String password, String clientName, boolean ssl, SSLSocketFactory sslSocketFactory,
-                                       SSLParameters sslParameters, HostnameVerifier hostnameVerifier, JedisClusterHostAndPortMap portMap) {
-    this.cache = new JedisClusterInfoCache(poolConfig, connectionTimeout, soTimeout, user, password, clientName,
-            ssl, sslSocketFactory, sslParameters, hostnameVerifier, portMap);
-    initializeSlotsCache(nodes, connectionTimeout, soTimeout, user, password, clientName, ssl, sslSocketFactory, sslParameters, hostnameVerifier);
-
+      final GenericObjectPoolConfig<Jedis> poolConfig, int connectionTimeout, int soTimeout,
+      int infiniteSoTimeout, String user, String password, String clientName) {
+    this(nodes, poolConfig,
+        DefaultJedisClientConfig.builder().connectionTimeoutMillis(connectionTimeout)
+            .socketTimeoutMillis(soTimeout).blockingSocketTimeoutMillis(infiniteSoTimeout)
+            .user(user).password(password).clientName(clientName).build());
   }
 
-  abstract Jedis getConnection();
+  public JedisClusterConnectionHandler(Set<HostAndPort> nodes,
+      final GenericObjectPoolConfig<Jedis> poolConfig, final JedisClientConfig clientConfig) {
+    this.cache = new JedisClusterInfoCache(poolConfig, clientConfig);
+    initializeSlotsCache(nodes, clientConfig);
+  }
 
-  abstract Jedis getConnectionFromSlot(int slot);
+  protected abstract Jedis getConnection();
+
+  protected abstract Jedis getConnectionFromSlot(int slot);
 
   public Jedis getConnectionFromNode(HostAndPort node) {
     return cache.setupNodeIfNotExist(node).getResource();
   }
-  
+
   public Map<String, JedisPool> getNodes() {
     return cache.getNodes();
   }
 
-  private void initializeSlotsCache(Set<HostAndPort> startNodes,
-  int connectionTimeout, int soTimeout, String password, String clientName,
-  boolean ssl, SSLSocketFactory sslSocketFactory, SSLParameters sslParameters, HostnameVerifier hostnameVerifier) {
+  private void initializeSlotsCache(Set<HostAndPort> startNodes, JedisClientConfig clientConfig) {
+    ArrayList<HostAndPort> startNodeList = new ArrayList<>(startNodes);
+    Collections.shuffle(startNodeList);
 
-    initializeSlotsCache(startNodes, connectionTimeout, soTimeout, null, password, clientName,
-      ssl, sslSocketFactory, sslParameters, hostnameVerifier );
-  }
-
-  private void initializeSlotsCache(Set<HostAndPort> startNodes,
-      int connectionTimeout, int soTimeout, String user, String password, String clientName,
-      boolean ssl, SSLSocketFactory sslSocketFactory, SSLParameters sslParameters, HostnameVerifier hostnameVerifier) {
-    for (HostAndPort hostAndPort : startNodes) {
-      Jedis jedis = null;
-      try {
-        jedis = new Jedis(hostAndPort.getHost(), hostAndPort.getPort(), connectionTimeout, soTimeout, ssl, sslSocketFactory, sslParameters, hostnameVerifier);
-        if (user != null) {
-          jedis.auth(user, password);
-        } else if (password != null) {
-          jedis.auth(password);
-        }
-        if (clientName != null) {
-          jedis.clientSetname(clientName);
-        }
+    for (HostAndPort hostAndPort : startNodeList) {
+      try (Jedis jedis = new Jedis(hostAndPort, clientConfig)) {
         cache.discoverClusterNodesAndSlots(jedis);
-        break;
+        return;
       } catch (JedisConnectionException e) {
         // try next nodes
-      } finally {
-        if (jedis != null) {
-          jedis.close();
-        }
       }
     }
   }
